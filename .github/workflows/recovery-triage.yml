@@ -1,0 +1,43 @@
+name: Recovery failure baseline triage
+
+on:
+  push:
+    branches: [baseline-triage]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    name: ${{ matrix.label }} recovery assertion
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: untouched-baseline
+            ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
+          - label: vision-candidate
+            ref: 7af3b502de2016309e7ec86df2728fc7c365cb0f
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 1
+      - name: Set up locked Python and test dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web"]'
+          test-environment: 'true'
+          prune-python-cache: true
+      - name: Record SQLite CLI selection
+        run: |
+          set -euo pipefail
+          sqlite3 --version || true
+          "$HERMES_PYTHON" -c "import hermes_cli.session_lost_and_found as l; print(l.find_sqlite3_cli_refusal())"
+      - name: Reproduce the single recovery test
+        run: >-
+          "$HERMES_PYTHON" -m pytest -q
+          tests/hermes_cli/test_session_recovery_lost_and_found.py::test_unreadable_schema_without_cli_names_the_sqlite3_requirement
