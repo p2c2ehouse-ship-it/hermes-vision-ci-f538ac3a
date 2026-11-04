@@ -1,0 +1,77 @@
+name: Vision candidate full-tree gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vision-candidate-f538ac3a
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Full-tree slice ${{ matrix.slice }}/2
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2]
+    steps:
+      - name: Checkout candidate and history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact candidate code
+        run: |
+          set -euo pipefail
+          BASELINE=bf0203a794a07aac3ff764972ab9087baa4e4f4e
+          CANDIDATE=7af3b502de2016309e7ec86df2728fc7c365cb0f
+          EXPECTED=f538ac3aee864e845f06d522c439a7a0299aba6cb68771c1a540fe4391b8802c
+          ACTUAL=$(git diff --binary "$BASELINE" "$CANDIDATE" | sha256sum | cut -d' ' -f1)
+          echo "Candidate diff SHA-256: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+          git diff --quiet "$CANDIDATE" HEAD -- . ':(exclude).github/workflows/vision-ci.yml'
+
+      - name: Install ripgrep (prebuilt binary)
+        run: |
+          set -euo pipefail
+          RG_VERSION=15.1.0
+          RG_SHA256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+          RG_TARBALL=ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz
+          curl -sSfL --retry 3 --retry-delay 5 -o "$RG_TARBALL" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+          echo "${RG_SHA256}  ${RG_TARBALL}" | sha256sum -c -
+          tar -xzf "$RG_TARBALL"
+          sudo mv "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
+          rm -rf "$RG_TARBALL" "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
+          rg --version
+
+      - name: Set up locked Python and test dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web"]'
+          test-environment: 'true'
+          prune-python-cache: true
+
+      - name: Check SQLite runs WAL
+        run: |
+          "$HERMES_PYTHON" -c "import sqlite3, sys, hermes_state_wal as w; v = w.is_sqlite_wal_reset_vulnerable(); print(f'Python {sys.version.split()[0]}, SQLite {sqlite3.sqlite_version}, WAL-reset vulnerable: {v}'); sys.exit(1 if v else 0)"
+
+      - name: Run complete full-tree test slice
+        run: scripts/run_tests.sh
+        env:
+          HERMES_TEST_SLICE: ${{ matrix.slice }}/2
+          HERMES_TEST_WORKERS: 4
+          HERMES_TEST_FILE_TIMEOUT: 600
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
