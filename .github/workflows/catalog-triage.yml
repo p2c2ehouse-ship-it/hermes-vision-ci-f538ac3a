@@ -1,0 +1,42 @@
+name: OpenRouter catalog baseline triage
+
+on:
+  push:
+    branches: [catalog-triage]
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    name: ${{ matrix.label }} catalog assertion
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: untouched-baseline
+            ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
+          - label: vision-candidate
+            ref: 7af3b502de2016309e7ec86df2728fc7c365cb0f
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 1
+      - name: Set up locked Python and test dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web"]'
+          test-environment: 'true'
+          prune-python-cache: true
+      - name: Reproduce the single OpenRouter catalog test
+        run: >-
+          "$HERMES_PYTHON" -m pytest -q
+          tests/plugins/image_gen/test_openrouter_compat_provider.py::TestImageApiSurface::test_catalog_models_are_offered_only_by_openrouter
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
