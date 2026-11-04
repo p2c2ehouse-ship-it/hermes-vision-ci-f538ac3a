@@ -1,0 +1,40 @@
+{
+  "active_profiles": [],
+  "extended_regression": {
+    "clean_full_tree_gate": false,
+    "failed": 1,
+    "passed": 304,
+    "setup_or_collection_errors": 181,
+    "skipped": 4
+  },
+  "focused_tests": {
+    "failed": 0,
+    "files": 10,
+    "passed": 157
+  },
+  "generated_at": "2026-11-04T04:42:31.540683+00:00",
+  "limitations": [
+    "mocked acceptance only",
+    "no live shadow/active baseline",
+    "partial-workspace version drift",
+    "semantic accuracy unlabeled"
+  ],
+  "live_implementation_matches": false,
+  "migrated_profiles": [],
+  "profiles_inspected": [
+    "default",
+    "beauty",
+    "counter",
+    "dainas",
+    "dump",
+    "forge",
+    "halp",
+    "polish",
+    "sexton",
+    "shrink",
+    "sketch",
+    "werk"
+  ],
+  "real_provider_calls": 0,
+  "real_third_party_cost_usd": 0
+}

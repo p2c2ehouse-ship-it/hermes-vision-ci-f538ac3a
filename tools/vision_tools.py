@@ -6,6 +6,9 @@ Images resolve through :mod:`tools.image_source`, are normalized to a provider-s
 model (multimodal tool-result envelope) or are described by the auxiliary vision LLM router.
 """
 
+import time
+import copy
+import hashlib
 import base64
 import asyncio
 import json
@@ -753,6 +756,118 @@ async def _vision_analyze_native(
             _unlink_quietly(prepared.path)
 
 
+def _routing_vision_config(kind: str) -> dict:
+    config = copy.deepcopy(_cfg_auxiliary("vision", default={}) or {})
+    if kind == "video":
+        video = _cfg_auxiliary("video", default={}) or {}
+        explicit = any((
+            str(video.get("provider") or "auto") != "auto", bool(video.get("model")),
+            bool(video.get("base_url")), bool(video.get("api_key")),
+        ))
+        if explicit:
+            for key in ("provider", "model", "base_url", "api_key", "timeout"):
+                if key in video:
+                    config[key] = video[key]
+        else:
+            config.update({"provider": "auto", "model": "", "base_url": "", "api_key": ""})
+    return config
+
+
+def _routing_state_paths() -> tuple[Path, Path]:
+    root = Path(get_hermes_dir()) / "vision-routing"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return root / "routing.db", root / "retained"
+
+
+def _estimate_image_input_tokens(prompt: str, data_url: str) -> tuple[Optional[int], str]:
+    """Reuse Hermes' calibrated preflight estimator; the result is explicitly not exact."""
+    try:
+        from agent.model_metadata import estimate_messages_tokens_rough
+        messages = _media_messages(prompt, "image_url", data_url)
+        return estimate_messages_tokens_rough(messages), "agent.model_metadata.estimate_messages_tokens_rough"
+    except Exception as exc:
+        logger.warning("Image input-token planning estimate unavailable: %s: %s", type(exc).__name__, exc, exc_info=True)
+        return None, "unavailable"
+
+
+def _routing_request(
+    kind: str, source: str, prompt: str, data_url: str, mime_type: str, byte_count: int,
+    vision_config: dict, request_context: Optional[dict],
+):
+    from agent.vision_integration import prompt_fingerprint
+    from agent.vision_routing import MediaRequest
+    context = request_context or {}
+    routing = vision_config.get("routing") or {}
+    output_cap = max(1, int(routing.get("output_cap", 512)))
+    hard_output_cap = max(output_cap, int(routing.get("hard_output_cap", 1024)))
+    lowered = (source or "").lower()
+    source_kind = "data" if lowered.startswith("data:") else "remote" if lowered.startswith(("http://", "https://")) else "local"
+    estimated_tokens, estimate_source = (
+        _estimate_image_input_tokens(prompt, data_url) if kind == "image" else (None, "unavailable")
+    )
+    return MediaRequest(
+        request_id=str(context.get("framework_call_id") or context.get("request_id") or f"vision_{uuid.uuid4().hex}"),
+        profile=str(context.get("profile") or "default"),
+        session_id=str(context.get("session_id") or context.get("task_id") or "unknown"),
+        media_kind=kind, media_hash=hashlib.sha256(data_url.encode("utf-8")).hexdigest(),
+        normalized_prompt_hash=prompt_fingerprint(prompt), mime_type=mime_type,
+        byte_count=byte_count, base64_bytes=len(data_url), output_cap=output_cap,
+        hard_output_cap=hard_output_cap, interaction_mode=str(context.get("interaction_mode") or "interactive"),
+        source_kind=source_kind, framework_call_id=context.get("framework_call_id"),
+        estimated_input_tokens=estimated_tokens, input_token_count_exact=False,
+        input_token_estimate_source=estimate_source,
+        pre_routing_elapsed_seconds=max(
+            0.0, time.monotonic() - float(context.get("routing_started_monotonic", time.monotonic())),
+        ),
+        preparation_latency_ms=max(
+            0.0, time.monotonic() - float(context.get("routing_started_monotonic", time.monotonic())),
+        ) * 1000,
+        size_bucket="small" if byte_count < 1024 * 1024 else "medium" if byte_count < 20 * 1024 * 1024 else "large",
+    )
+
+
+async def _route_prepared_media(
+    kind: str, source: str, prompt: str, data_url: str, mime_type: str, byte_count: int,
+    call_kwargs: dict, vision_config: dict, request_context: Optional[dict], media_correction=None,
+):
+    from agent import vision_integration as integration
+    mode = integration.routing_mode(vision_config)
+    if mode == "legacy":
+        return None
+    request = _routing_request(
+        kind, source, prompt, data_url, mime_type, byte_count, vision_config, request_context,
+    )
+    db_path, retention_dir = _routing_state_paths()
+    if mode == "shadow":
+        selection = integration.shadow_prepared(request, vision_config, db_path=db_path)
+        request_context["_vision_shadow"] = {
+            "request": request, "candidate_id": selection.selected.candidate_id if selection.selected else None,
+            "db_path": db_path,
+        }
+        return None
+    _load_auxiliary_client()
+    return await integration.analyze_prepared(
+        request, call_kwargs["messages"], call_kwargs, vision_config,
+        db_path=db_path, retention_dir=retention_dir, provider_call=async_call_llm,
+        media_correction=media_correction,
+    )
+
+
+def _record_shadow_legacy(
+    request_context: Optional[dict], started_monotonic: float, *, analysis: str = "",
+    error: Optional[Exception] = None,
+) -> None:
+    marker = (request_context or {}).get("_vision_shadow")
+    if not marker:
+        return
+    from agent import vision_integration as integration
+    integration.record_legacy_outcome(
+        # The shadow-selected route is not necessarily the provider that served legacy.
+        marker["request"], candidate_id=None, db_path=marker["db_path"],
+        started_monotonic=started_monotonic, analysis=analysis, error=error,
+    )
+
+
 def _aux_call_kwargs(messages: list, model: Optional[str], default_timeout: float, *,
                      min_timeout: Optional[float] = None) -> dict:
     """``async_call_llm`` kwargs with ``auxiliary.vision.timeout`` / ``.temperature`` from config.
@@ -857,6 +972,14 @@ async def _run_analysis(
         logger.info("Analyzing %s: %s", kind, source[:60])
         logger.info("User prompt: %s", user_prompt[:100])
         analysis, scale_note = await stage(user_prompt, debug_call_data, temp_paths)
+        if isinstance(analysis, dict):
+            result = dict(analysis)
+            if scale_note:
+                result["scale_note"] = scale_note
+                if result.get("success") and result.get("analysis"):
+                    result["analysis"] = f"[{scale_note}] " + str(result.get("analysis") or "")
+            debug_call_data.update(success=bool(result.get("success")), analysis_length=len(str(result.get("analysis") or "")))
+            return finish(result)
         analysis_length = len(analysis) if analysis else 0
         logger.info("%s analysis completed (%s characters)", kind.capitalize(), analysis_length)
         analysis = analysis or f"There was a problem with the request and the {kind} could not be analyzed."
@@ -887,9 +1010,12 @@ async def _run_analysis(
 
 async def vision_analyze_tool(
     image_url: str, user_prompt: str, model: str | None = None,
-    task_id: Optional[str] = None, region: Optional[list] = None) -> str:
+    task_id: Optional[str] = None, region: Optional[list] = None,
+    request_context: Optional[dict] = None) -> str:
     """Describe an image (URL, local path, data: URL) with the auxiliary vision LLM. ``user_prompt``
     is pre-formatted by the caller. Temp images live under $HERMES_HOME/cache/vision/."""
+    request_context = dict(request_context or {})
+    request_context.setdefault("routing_started_monotonic", time.monotonic())
     async def stage(prompt: str, debug_call_data: dict, temp_paths: list) -> tuple:
         prepared = await _prepare_image(image_url, task_id, region, validate_decode=False)
         temp_paths.append(prepared.path)
@@ -906,22 +1032,41 @@ async def vision_analyze_tool(
                 raise ValueError(_too_large_message(image_data_url))
         debug_call_data["image_size_bytes"] = prepared.size_bytes
         messages = _media_messages(prompt, "image_url", image_data_url)
+        async def correct_media(current_messages, control):
+            corrected = copy.deepcopy(current_messages)
+            resized = await _resize_prepared(prepared, _scale_info)
+            if resized == image_data_url:
+                raise ValueError("image resize did not produce a smaller distinct payload")
+            corrected[0]["content"][1]["image_url"]["url"] = resized
+            return corrected
         logger.info("Processing image with vision model...")
         call_kwargs = _aux_call_kwargs(messages, model, 120.0)
+        routed = await _route_prepared_media(
+            "image", image_url, prompt, image_data_url, prepared.mime, prepared.size_bytes,
+            call_kwargs, _routing_vision_config("image"), request_context, media_correction=correct_media,
+        )
+        if routed is not None:
+            return routed.to_dict(), _build_scale_note(_scale_info or None, prepared.crop_offset or None)
         _load_auxiliary_client()
+        legacy_started = time.monotonic()
         try:
-            response = await async_call_llm(**call_kwargs)
-        except Exception as _api_err:
-            if not (_is_image_size_error(_api_err) and len(image_data_url) > _RESIZE_TARGET_BYTES):
-                raise
-            logger.info(
-                "API rejected image (%.1f MB, likely too large); auto-resizing to ~%.0f MB and retrying...",
-                len(image_data_url) / (1024 * 1024), _RESIZE_TARGET_BYTES / (1024 * 1024))
-            image_data_url = await _resize_prepared(prepared, _scale_info)
-            messages[0]["content"][1]["image_url"]["url"] = image_data_url
-            response = await async_call_llm(**call_kwargs)
-        analysis = await _call_vision_llm(
-            call_kwargs, "Vision LLM returned empty content, retrying once", response)
+            try:
+                response = await async_call_llm(**call_kwargs)
+            except Exception as _api_err:
+                if not (_is_image_size_error(_api_err) and len(image_data_url) > _RESIZE_TARGET_BYTES):
+                    raise
+                logger.info(
+                    "API rejected image (%.1f MB, likely too large); auto-resizing to ~%.0f MB and retrying...",
+                    len(image_data_url) / (1024 * 1024), _RESIZE_TARGET_BYTES / (1024 * 1024))
+                image_data_url = await _resize_prepared(prepared, _scale_info)
+                messages[0]["content"][1]["image_url"]["url"] = image_data_url
+                response = await async_call_llm(**call_kwargs)
+            analysis = await _call_vision_llm(
+                call_kwargs, "Vision LLM returned empty content, retrying once", response)
+        except Exception as exc:
+            _record_shadow_legacy(request_context, legacy_started, error=exc)
+            raise
+        _record_shadow_legacy(request_context, legacy_started, analysis=analysis)
         return analysis, _build_scale_note(_scale_info or None, prepared.crop_offset or None)
     return await _run_analysis("image", image_url, user_prompt, model, stage)
 
@@ -935,6 +1080,10 @@ def check_video_requirements() -> bool:
 
     See #31179.
     """
+    from agent import vision_integration as integration
+    vision_config = _routing_vision_config("video")
+    if integration.routing_mode(vision_config) == "active":
+        return integration.video_route_available(vision_config)
     from agent.auxiliary_client import aux_probe_mode, resolve_vision_provider_client
     # No blanket except: a resolver crash must reach the registry, which logs it with a
     # traceback; a swallowed exception reads as "no vision backend configured" (#87950).
@@ -950,7 +1099,13 @@ def check_vision_requirements() -> bool:
     provider the aux resolver does not know (OAuth, local vLLM) must not hide a working tool (#47149).
     ``video_analyze`` keeps the aux-only gate — its handler has no native path.
     """
-    return _should_use_native_vision_fast_path() or check_video_requirements()
+    if _should_use_native_vision_fast_path():
+        return True
+    from agent import vision_integration as integration
+    vision_config = _routing_vision_config("image")
+    if integration.routing_mode(vision_config) == "active":
+        return integration.image_route_available(vision_config)
+    return check_video_requirements()
 
 
 from tools.registry import registry, tool_error
@@ -1010,6 +1165,20 @@ def _configured_aux_model(sections: tuple, env_vars: tuple) -> Optional[str]:
     return next((v for v in (os.getenv(e, "").strip() for e in env_vars) if v), None)
 
 
+def _framework_tool_call_id(kw: dict) -> Optional[str]:
+    """Reuse the ID model_tools binds for approval observability, including older dispatchers."""
+    explicit = kw.get("framework_call_id") or kw.get("tool_call_id")
+    if explicit:
+        return str(explicit)
+    try:
+        from tools.approval_context import _approval_tool_call_id
+        value = _approval_tool_call_id.get()
+        return str(value) if value else None
+    except Exception as exc:
+        logger.debug("Framework tool-call ID unavailable: %s", exc, exc_info=True)
+        return None
+
+
 async def _handle_vision_analyze(args: dict[str, Any], **kw: Any) -> str:
     image_url, question, region = args.get("image_url", ""), args.get("question", ""), args.get("region")
     task_id = kw.get("task_id")
@@ -1024,7 +1193,16 @@ async def _handle_vision_analyze(args: dict[str, Any], **kw: Any) -> str:
         "Fully describe and explain everything about this image, then answer the "
         f"following question:\n\n{question}")
     model = _configured_aux_model(("vision",), ("AUXILIARY_VISION_MODEL",))
-    return await vision_analyze_tool(image_url, full_prompt, model, task_id=task_id, region=region)
+    request_context = {key: kw.get(key) for key in (
+        "profile", "session_id", "framework_call_id", "interaction_mode", "request_id",
+    ) if kw.get(key) is not None}
+    framework_call_id = _framework_tool_call_id(kw)
+    if framework_call_id:
+        request_context["framework_call_id"] = framework_call_id
+    request_context["task_id"] = task_id
+    return await vision_analyze_tool(
+        image_url, full_prompt, model, task_id=task_id, region=region, request_context=request_context,
+    )
 
 
 registry.register(
@@ -1120,8 +1298,11 @@ async def _materialize_video(video_url: str, task_id: Optional[str], temp_paths:
 
 
 async def video_analyze_tool(
-    video_url: str, user_prompt: str, model: str | None = None, task_id: Optional[str] = None) -> str:
+    video_url: str, user_prompt: str, model: str | None = None, task_id: Optional[str] = None,
+    request_context: Optional[dict] = None) -> str:
     """Analyze a video via multimodal LLM. Returns JSON {success, analysis}."""
+    request_context = dict(request_context or {})
+    request_context.setdefault("routing_started_monotonic", time.monotonic())
     async def stage(prompt: str, debug_call_data: dict, temp_paths: list) -> tuple:
         temp_video_path = await _materialize_video(video_url, task_id, temp_paths)
         video_size_bytes = temp_video_path.stat().st_size
@@ -1141,7 +1322,19 @@ async def video_analyze_tool(
         debug_call_data["video_size_bytes"] = video_size_bytes
         messages = _media_messages(prompt, "video_url", video_data_url)
         call_kwargs = _aux_call_kwargs(messages, model, 180.0, min_timeout=180.0)
-        analysis = await _call_vision_llm(call_kwargs, "Empty video response, retrying once")
+        routed = await _route_prepared_media(
+            "video", video_url, prompt, video_data_url, detected_mime, video_size_bytes,
+            call_kwargs, _routing_vision_config("video"), request_context,
+        )
+        if routed is not None:
+            return routed.to_dict(), None
+        legacy_started = time.monotonic()
+        try:
+            analysis = await _call_vision_llm(call_kwargs, "Empty video response, retrying once")
+        except Exception as exc:
+            _record_shadow_legacy(request_context, legacy_started, error=exc)
+            raise
+        _record_shadow_legacy(request_context, legacy_started, analysis=analysis)
         return analysis, None
     return await _run_analysis("video", video_url, user_prompt, model, stage)
 
@@ -1179,7 +1372,16 @@ def _handle_video_analyze(args: dict[str, Any], **kw: Any) -> Awaitable[str]:
         "including visual content, motion, audio cues, text overlays, and scene "
         f"transitions. Then answer the following question:\n\n{question}")
     model = _configured_aux_model(("video", "vision"), ("AUXILIARY_VIDEO_MODEL", "AUXILIARY_VISION_MODEL"))
-    return video_analyze_tool(video_url, full_prompt, model, task_id=kw.get("task_id"))
+    request_context = {key: kw.get(key) for key in (
+        "profile", "session_id", "framework_call_id", "interaction_mode", "request_id",
+    ) if kw.get(key) is not None}
+    framework_call_id = _framework_tool_call_id(kw)
+    if framework_call_id:
+        request_context["framework_call_id"] = framework_call_id
+    request_context["task_id"] = kw.get("task_id")
+    return video_analyze_tool(
+        video_url, full_prompt, model, task_id=kw.get("task_id"), request_context=request_context,
+    )
 
 
 registry.register(

@@ -1,0 +1,280 @@
+{
+  "active_profiles": [],
+  "implementation": {
+    "agent/auxiliary_client.py": {
+      "live_path": "/opt/hermes/agent/auxiliary_client.py",
+      "live_present": true,
+      "live_sha256": "053078416f2b2d94256584a5c1ed6176bfbd3f3de88a8ca858e8257274a04bb5",
+      "matches_scratch": false,
+      "scratch_sha256": "9c935ffda0265e2b4e2dc2db4238c1292a6bfc5c0a9c984601073ca1f56ea062"
+    },
+    "agent/vision_integration.py": {
+      "live_path": "/opt/hermes/agent/vision_integration.py",
+      "live_present": false,
+      "live_sha256": null,
+      "matches_scratch": false,
+      "scratch_sha256": "4133dcdde5b23a8eafd1ad7dd0b8694459a2b3050e89ed680950458435f12904"
+    },
+    "agent/vision_routing.py": {
+      "live_path": "/opt/hermes/agent/vision_routing.py",
+      "live_present": false,
+      "live_sha256": null,
+      "matches_scratch": false,
+      "scratch_sha256": "3ce07c651c2eb5806c86202211b951d239bec92b69798942e605c177f8bfda66"
+    },
+    "hermes_cli/config.py": {
+      "live_path": "/opt/hermes/hermes_cli/config.py",
+      "live_present": true,
+      "live_sha256": "1aebd87e71338c17f63bdf13ecd62c59aa053bc0b1270398efaa327642a1142b",
+      "matches_scratch": false,
+      "scratch_sha256": "0093241479d9339cc65ef85b25e385c0088d720fd682794552c03f3003238212"
+    },
+    "hermes_cli/config_defaults.py": {
+      "live_path": "/opt/hermes/hermes_cli/config_defaults.py",
+      "live_present": true,
+      "live_sha256": "64890345b7b4d6601bd0dd4c8caac95ba1eaf793ae8b9236c0ccf149e6b2b3bf",
+      "matches_scratch": false,
+      "scratch_sha256": "dbbf441462c0be53ad277ff73ce910828ff542805574a7ec86fcdebd84ddaa77"
+    },
+    "tools/vision_tools.py": {
+      "live_path": "/opt/hermes/tools/vision_tools.py",
+      "live_present": true,
+      "live_sha256": "df3072ca25fbe9bc5d58acfb22cd2ce71af64f72b00477f4f4f841d1a27c2084",
+      "matches_scratch": false,
+      "scratch_sha256": "bba292f35ee13bb83937909909105f53acc9a6c4f53b4b604d982cf52ee36f79"
+    }
+  },
+  "migrated_profiles": [],
+  "profiles": [
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "nvidia/nemotron-3.5-super-vl:free",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "default",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "beauty",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it:free",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "counter",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemini-3.8-flash",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "dainas",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": false,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": null,
+      "configured_provider": null,
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "dump",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "gemini-3.6-flash",
+      "configured_provider": "gemini",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "forge",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it:free",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "halp",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it:free",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "polish",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it:free",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "sexton",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemini-2.5-flash",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "shrink",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it:free",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "sketch",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    },
+    {
+      "active_image_route_available": false,
+      "active_video_route_available": false,
+      "auxiliary_vision_configured": true,
+      "candidate_count": 0,
+      "candidates": [],
+      "config_present": true,
+      "configured_model": "google/gemma-4-31b-it",
+      "configured_provider": "openrouter",
+      "mode": "legacy",
+      "paid_recovery_allowed": false,
+      "profile": "werk",
+      "telemetry": {
+        "exists": false,
+        "path_scope": "profile_default"
+      },
+      "validation_issue_count": 0,
+      "validation_issues": []
+    }
+  ],
+  "read_only": true,
+  "secrets_included": false
+}

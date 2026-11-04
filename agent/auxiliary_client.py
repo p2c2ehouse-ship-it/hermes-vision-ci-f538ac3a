@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, TYPE_CHECKING, Union
 from urllib.parse import urlparse, parse_qs, urlunparse
 
+from agent.auxiliary_ladder import _drive_ladder, _drive_ladder_async
 from agent.local_prompt_progress import (
     PromptReadingClock, current_prompt_reading_hook, prompt_progress, prompt_reading_hook, with_prompt_progress)
 from agent.error_classifier import (
@@ -7971,36 +7972,6 @@ def _aux_recovery_ladder(
     raise first_err
 
 
-def _drive_ladder(ladder, perform: Callable[[_LadderStep], Any]) -> Any:
-    """Run a ladder generator, feeding each step's result (or exception) back in."""
-    try:
-        step = next(ladder)
-        while True:
-            try:
-                result = perform(step)
-            except Exception as exc:
-                step = ladder.throw(exc)
-            else:
-                step = ladder.send(result)
-    except StopIteration as stop:
-        return stop.value
-
-
-async def _drive_ladder_async(ladder, perform: Callable[[_LadderStep], Any]) -> Any:
-    """Async twin of :func:`_drive_ladder` (``perform`` is awaited)."""
-    try:
-        step = next(ladder)
-        while True:
-            try:
-                result = await perform(step)
-            except Exception as exc:
-                step = ladder.throw(exc)
-            else:
-                step = ladder.send(result)
-    except StopIteration as stop:
-        return stop.value
-
-
 def _elapsed_ms(started_at: float, now: Optional[float] = None) -> int:
     """Whole milliseconds since ``started_at`` (clamped at 0)."""
     return max(0, int(((time.monotonic() if now is None else now) - started_at) * 1000))
@@ -8021,6 +7992,7 @@ def call_llm(
     extra_headers: Optional[dict[str, str]] = None, api_mode: str | None = None, stream: bool = False,
     stream_options: dict | None = None, route_info: Optional[dict[str, str]] = None,
     latency_info: Optional[dict[str, int]] = None,
+    route_control: Any = None,
 ) -> Any:
     """Run an auxiliary LLM request, applying the configured task limit."""
     queue_started_at = time.monotonic()
@@ -8045,6 +8017,7 @@ def call_llm(
                 _stamp_latency_once, latency_info, "time_to_first_progress_ms", request_started_at)),
         ):
             response = _call_llm_impl(
+                route_control=route_control,
                 task=task, provider=provider, model=model, base_url=base_url, api_key=api_key,
                 main_runtime=main_runtime, messages=messages, temperature=temperature,
                 max_tokens=max_tokens, tools=tools, timeout=timeout, extra_body=extra_body,
@@ -8155,12 +8128,15 @@ def _call_llm_impl(
     timeout: float | None = None, extra_body: dict | None = None, reasoning_config: Optional[dict] = None,
     extra_headers: Optional[dict[str, str]] = None, api_mode: str | None = None, stream: bool = False,
     stream_options: dict | None = None, route_info: Optional[dict[str, str]] = None,
+    route_control: Any = None,
 ) -> Any:
     """Centralized synchronous LLM call: resolve provider/model, auth, kwargs, fallbacks.
     task: aux task whose provider:model comes from config (ignored if provider set); api_mode
     overrides task config; timeout=None reads auxiliary.{task}.timeout; extra_headers override
     client defaults. stream=True returns the raw SDK stream (caller consumes/falls back)
     instead of a validated response. RuntimeError if no provider is configured."""
+    if route_control is not None and (not provider or provider == "auto" or not model):
+        raise ValueError("selector route_control requires an explicit provider and model")
     req, retry_kwargs, candidate_kwargs = _plan_aux_call(
         task, async_mode=False, provider=provider, model=model, base_url=base_url,
         api_key=api_key, main_runtime=main_runtime, messages=messages,
@@ -8204,6 +8180,8 @@ def _call_llm_impl(
             ),
             task, **validate_kw,
         )
+    if route_control is not None:
+        return _primary(provider=request_provider, base_url=req.base_info)
     try:
         # Bounded same-provider retry (exponential backoff, auxiliary.transient_retries) for
         # transient blips before escalating to fallback — a dropped connection shouldn't
@@ -8316,6 +8294,7 @@ async def async_call_llm(
     temperature: Optional[float] = None, max_tokens: int | None = None, tools: list | None = None,
     timeout: float | None = None, extra_body: dict | None = None, reasoning_config: Optional[dict] = None,
     route_info: Optional[dict[str, str]] = None,
+    route_control: Any = None,
 ) -> Any:
     """Run an asynchronous auxiliary LLM request under the configured limit."""
     semaphore = _acquire_async_aux_semaphore(task)
@@ -8328,6 +8307,7 @@ async def async_call_llm(
                 main_runtime=main_runtime, messages=messages, temperature=temperature,
                 max_tokens=max_tokens, tools=tools, timeout=timeout, extra_body=extra_body,
                 reasoning_config=reasoning_config, route_info=route_info,
+                route_control=route_control,
             )
     finally:
         if semaphore is not None:
@@ -8340,9 +8320,12 @@ async def _async_call_llm_impl(
     temperature: Optional[float] = None, max_tokens: int | None = None, tools: list | None = None,
     timeout: float | None = None, extra_body: dict | None = None, reasoning_config: Optional[dict] = None,
     route_info: Optional[dict[str, str]] = None,
+    route_control: Any = None,
 ) -> Any:
     """Centralized asynchronous LLM call; see call_llm() for full documentation.
     No per-request header / api_mode override on the async entry point."""
+    if route_control is not None and (not provider or provider == "auto" or not model):
+        raise ValueError("selector route_control requires an explicit provider and model")
     req, retry_kwargs, candidate_kwargs = _plan_aux_call(
         task, async_mode=True, provider=provider, model=model, base_url=base_url,
         api_key=api_key, main_runtime=main_runtime, messages=messages,
@@ -8367,6 +8350,8 @@ async def _async_call_llm_impl(
                     client, kwargs, provider=request_provider, api_mode=req.resolved_api_mode,
                     create=_acreate),
                 task, **validate_kw)
+        if route_control is not None:
+            return await _primary(provider=request_provider, base_url=req.base_info)
         try:
             return await _primary(provider=request_provider, base_url=req.base_info)
         except Exception as transient_err:
@@ -8377,6 +8362,8 @@ async def _async_call_llm_impl(
                         "once on the same provider before fallback: %s", task or "call", transient_err)
             return await _primary()
     except Exception as first_err:
+        if route_control is not None:
+            raise
         async def _perform(step: _LadderStep) -> Any:
             kind, args, kw = _ladder_step_call(step, req, retry_kwargs, candidate_kwargs)
             if kind == "call":

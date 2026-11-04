@@ -4,6 +4,7 @@ Pure-data leaf module — must not import from hermes_cli.config. Comments are t
 docs of config.yaml.
 """
 
+from hermes_cli.config_auxiliary import _aux, vision_routing_defaults
 
 #: Image every container terminal backend (docker/modal/daytona, the singularity plugin) uses unless the
 #: user pins one. LEGACY_SANDBOX_IMAGES are the plain defaults that preceded the desktop stack
@@ -15,19 +16,6 @@ LEGACY_SANDBOX_IMAGE = LEGACY_SANDBOX_IMAGES[0]
 # Vercel Sandbox managed image (Vercel deprecated its `runtime` presets in Aug 2026).
 DEFAULT_VERCEL_IMAGE = "vercel/sandbox/universal:latest"
 LEGACY_VERCEL_RUNTIME = "node24"  # the seeded pre-49 default, never a user choice
-
-
-def _aux(timeout, *, reasoning_effort=True, **extra):
-    """Standard auxiliary-task model block (see DEFAULT_CONFIG["auxiliary"]).
-
-    reasoning_effort=False omits that key (MoA blocks configure depth per slot);
-    ``extra`` keys are appended after the standard ones.
-    """
-    d = {"provider": "auto", "model": "", "base_url": "", "api_key": "", "timeout": timeout, "extra_body": {}}
-    if reasoning_effort:
-        d["reasoning_effort"] = ""
-    d.update(extra)
-    return d
 
 
 DEFAULT_CONFIG = {
@@ -770,7 +758,9 @@ DEFAULT_CONFIG = {
         # overrides provider; api_key falls back to OPENAI_API_KEY; reasoning_effort:
         # none|minimal|low|medium|high|xhigh|max|ultra ("" = provider default); extra_body =
         # OpenAI-compatible request fields. Vision: download_timeout = image HTTP download (s).
-        "vision": _aux(120, download_timeout=30),
+        # Shared image/video selector. No provider is registered or probed by default;
+        # active mode therefore fails closed until explicit verified candidates are configured.
+        "vision": _aux(120, download_timeout=30, routing=vision_routing_defaults()),
         # web_extract and session_search no longer use an aux LLM; leftover blocks in user config
         # are ignored. Compression: raise timeout for local models. no_progress_timeout:
         # seconds a streamed call goes without a substantive chunk before it fails fast into
